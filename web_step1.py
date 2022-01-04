@@ -1,15 +1,14 @@
 from pywebio.input import actions, input_group
 from pywebio.output import clear, put_html, put_row, put_text
-from pywebio.platform.tornado import start_server
 import pandas as pd
 import re
 from collections import defaultdict
-import typing
 from dataclasses import dataclass
 import uuid
 import logging
 import time
 import os
+import argparse
 
 
 token = "sp=r&st=2021-12-30T07:26:27Z&se=2022-02-01T15:26:27Z&sv=2020-08-04&sr=c&sig=D78d1irOmMA3sEKRL%2FGaH88%2FwppCQlP0DNu2dndYzM0%3D"
@@ -135,8 +134,11 @@ def update_file(df, path="step1.csv"):
 def get_unchecked_id(id_to_index, df):
     targ_id = None
     for key, value in id_to_index.items():
-        status = df.loc[value[0], "checked"]
-        if status == "NO":
+        df_tmp = df[df["corrected_shopper_id"] == key]
+        checked_list = df_tmp["checked"].tolist()
+        status = "NO" in checked_list
+        print(status)
+        if status:
             targ_id = key
             return targ_id
     return targ_id
@@ -146,10 +148,10 @@ def get_logger():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     rq = time.strftime("%Y%m%d%H%M", time.localtime(time.time()))
-    log_path = os.path.dirname(os.getcwd()) + "/Logs/"
+    log_path = os.path.join(os.getcwd(),"logs")
     if not os.path.exists(log_path):
         os.makedirs(log_path)
-    log_name = os.path.join(log_path + rq + "log_step1.log")
+    log_name = os.path.join(log_path ,rq + "-log_step1.log")
     logfile = log_name
     fh = logging.FileHandler(logfile, mode="w")
     fh.setLevel(logging.DEBUG)
@@ -161,10 +163,14 @@ def get_logger():
     return logger
 
 
-def main(path):
+def main(path, load_cache=False):
     logger = get_logger()
+    if load_cache:
+        path = "step1.csv"
+
     df = pd.read_csv(path)
-    if not "checked" in df.columns.values:
+
+    if "checked" not in df.columns.values:
         df["checked"] = "NO"
 
     id_to_index = defaultdict(list)
@@ -174,6 +180,7 @@ def main(path):
 
     while True:
         targ_id = get_unchecked_id(id_to_index, df)
+        # print(targ_id,)
         if targ_id is None:
             break
         index_list = id_to_index[targ_id]
@@ -186,9 +193,9 @@ def main(path):
                 continue
             Flag = None
             while True:
-                if Flag == None:
+                if Flag is None:
                     text = "Unchecked!"
-                elif Flag == False:
+                elif Flag is False:
                     text = "Not Same person!"
                 else:
                     text = "Same person!"
@@ -201,24 +208,43 @@ def main(path):
                     + " info:"
                     + str(info)
                 )
-                # print(index,index_tmp,info)
+                print(index, index_tmp, info)
                 clear()
-                if info["check"] == 0:
+                if info["check"] == 0:  # NO
                     Flag = False
-                if info["check"] == -1:
-                    if Flag == False:
+                if info["check"] == -1:  # save
+                    if Flag is False:
                         df.loc[index, "corrected_shopper_id"] = uuid.uuid1()
+                    if Flag is not None:
+                        df.loc[index, "checked"] = "YES"
                     update_file(df)
-                if info["check"] == 1:
+                if info["check"] == 1:  # YES
                     Flag = True
-                if info["check"] == 2:
-                    if Flag == False:
+                if info["check"] == 2:  # next
+                    if Flag is False:
                         df.loc[index, "corrected_shopper_id"] = uuid.uuid1()
+                    if Flag is not None:
+                        df.loc[index, "checked"] = "YES"
+                    update_file(df)
                     break
-        update_file(df)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--load_cache", type=str, default=False, help="whether to load cache",
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        default="~/Downloads/merged_new_hat_table.csv",
+        help="Path of hat case table",
+    )
+    args = parser.parse_args()
+    return args
 
 
 if __name__ == "__main__":
-    path = "~/Downloads/merged_new_hat_table.csv"
-    main(path)
-    # start_server(main)
+
+    args = parse_args()
+    main(args.path, args.load_cache)

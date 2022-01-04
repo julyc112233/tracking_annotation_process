@@ -1,15 +1,13 @@
 from pywebio.input import actions, input_group
 from pywebio.output import clear, put_html, put_row, put_text
-from pywebio.platform.tornado import start_server
 import pandas as pd
 import re
 from collections import defaultdict
-import typing
 from dataclasses import dataclass
-import uuid
 import logging
 import time
 import os
+import argparse
 
 token = "sp=r&st=2021-12-30T07:26:27Z&se=2022-02-01T15:26:27Z&sv=2020-08-04&sr=c&sig=D78d1irOmMA3sEKRL%2FGaH88%2FwppCQlP0DNu2dndYzM0%3D"
 
@@ -118,13 +116,14 @@ def display(index1, index2, df, text="Unchecked!"):
     return info
 
 
-def update_file(df, book, path="step2.csv"):
+def update_file(df, df_pair, book, path="step2.csv", pair_path="step2_pair.csv"):
     for index, row in df.iterrows():
         df.loc[index, "corrected_shopper_id"] = find(
             str(row["corrected_shopper_id"]), book
         )
     print("write to ", path)
     df.to_csv(path)
+    df_pair.to_csv(pair_path)
 
 
 def get_unchecked_id(id_to_index, df):
@@ -140,14 +139,11 @@ def get_unchecked_id(id_to_index, df):
     return targ_id
 
 
-def get_valid_pair(infos):
-    res = []
-    for info in infos:
-        strs = info.split(",")
-        id1 = strs[0][1:]
-        id2 = strs[1][1:-1]
-        res.append((id1, id2))
-    return res
+def get_id(info):
+    strs = info.split(",")
+    id1 = strs[0][1:]
+    id2 = strs[1][1:-1]
+    return id1, id2
 
 
 def find(id, book):
@@ -172,10 +168,10 @@ def get_logger():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     rq = time.strftime("%Y%m%d%H%M", time.localtime(time.time()))
-    log_path = os.path.dirname(os.getcwd()) + rq + "/Logs/"
+    log_path = os.path.join(os.getcwd(), "logs")
     if not os.path.exists(log_path):
         os.makedirs(log_path)
-    log_name = os.path.join(log_path + "log_step2.log")
+    log_name = os.path.join(log_path, rq + "-log_step2.log")
     logfile = log_name
     fh = logging.FileHandler(logfile, mode="w")
     fh.setLevel(logging.DEBUG)
@@ -187,25 +183,36 @@ def get_logger():
     return logger
 
 
-def main(data_path, pair_path):
+def main(data_path, pair_path, load_cache=False):
     logger = get_logger()
     df = pd.read_csv(data_path)
+
+    if load_cache:
+        pair_path = "step2_pair.csv"
     df_pair = pd.read_csv(pair_path)
-    valid_pair = get_valid_pair(df_pair["0"].tolist())
+    if "checked" not in df_pair.columns.values:
+        df_pair["checked"] = "NO"
+
+    # valid_pair = get_valid_pair(df_pair["0"].tolist())
     id_to_index = defaultdict(list)
     book = {}
     for index, row in df.iterrows():
         id = str(row["corrected_shopper_id"])
         id_to_index[id].append(index)
         book[id] = id
-    for x, y in valid_pair:
+
+    for index, row in df_pair.iterrows():
+        info = row["0"]
+        if row["checked"] == "YES":
+            continue
+        x, y = get_id(info)
         index1 = id_to_index[x][0]
         index2 = id_to_index[y][0]
         Flag = None
         while True:
-            if Flag == None:
+            if Flag is None:
                 text = "Unchecked!"
-            elif Flag == False:
+            elif Flag is False:
                 text = "Not Same person!"
             else:
                 text = "Same person!"
@@ -230,20 +237,44 @@ def main(data_path, pair_path):
             if info["check"] == 0:
                 Flag = False
             if info["check"] == -1:
-                if Flag == True:
+                if Flag is True:
                     unite(x, y, book)
-                update_file(df, book)
+                if Flag is not None:
+                    df_pair.loc[index, "checked"] = "YES"
+                update_file(df, df_pair, book)
             if info["check"] == 1:
                 Flag = True
             if info["check"] == 2:
-                if Flag == True:
+                if Flag is True:
                     unite(x, y, book)
+                if Flag is not None:
+                    df_pair.loc[index, "checked"] = "YES"
                 break
     update_file(df, book, book)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--load_cache", type=str, default=True, help="whether to load cache",
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        default=None,
+        help="Path of hat case table",
+    )
+    parser.add_argument(
+        "--pair_path",
+        type=str,
+        default=None,
+        help="Path of valid people id pairs",
+    )
+    args = parser.parse_args()
+    return args
+
+
 if __name__ == "__main__":
-    path = "~/Downloads/merged_new_hat_table.csv"
-    pair_path = "~/Downloads/se.csv"
-    main(path, pair_path)
+    args = parse_args()
+    main(args.path, args.pair_path, args.load_cache)
     # start_server(main)
